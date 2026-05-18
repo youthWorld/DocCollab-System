@@ -69,6 +69,26 @@
           <el-input v-model="editingDoc.title" placeholder="输入文档标题..." class="title-input" :maxlength="100" />
         </div>
         <div class="topbar-right">
+          <el-popover v-if="participants.length > 0" placement="bottom" :width="180" trigger="hover">
+            <template #reference>
+              <span class="collab-badge">
+                <el-icon>
+                  <Connection />
+                </el-icon>
+                {{ participants.length + 1 }}
+              </span>
+            </template>
+            <div class="participant-list">
+              <div class="participant-item me">
+                <span class="dot" style="background:#409eff"></span>
+                {{ collabUsername || '我' }}（我）
+              </div>
+              <div v-for="p in participants" :key="p" class="participant-item">
+                <span class="dot" :style="{ background: userColor(p) }"></span>
+                {{ p }}
+              </div>
+            </div>
+          </el-popover>
           <template v-if="!store.isViewingHistory">
             <span class="save-hint" v-if="hasUnsaved">有未保存的更改</span>
             <el-button type="primary" @click="saveDoc" :icon="Check" round>
@@ -195,7 +215,7 @@
 <script setup lang="ts">
 import { ref, computed, onBeforeUnmount, watch } from 'vue'
 import { ElMessage } from 'element-plus'
-import { Plus, Check, ArrowLeft, ArrowRight } from '@element-plus/icons-vue'
+import { Plus, Check, ArrowLeft, ArrowRight, Connection } from '@element-plus/icons-vue'
 import { useProjectStore } from '@/stores/project'
 import { saveDocument, formatDate } from '@/utils/storage'
 import { useEditor, EditorContent } from '@tiptap/vue-3'
@@ -210,29 +230,108 @@ const isNew = ref(false)
 const hasUnsaved = ref(false)
 let originalContent = ''
 
+// ========== BroadcastChannel 多人协作（标签页即用户） ==========
+const collabChannel = ref<BroadcastChannel | null>(null)
+const participants = ref<string[]>([])
+const collabUsername = ref(localStorage.getItem('doccollab_username') || '')
+let remoteVersion = 0   // 收到的远程消息版本号，用于去重
+let localVersion = 0    // 本地编辑版本号
+let editDebounce: ReturnType<typeof setTimeout> | null = null
+
+if (!collabUsername.value) {
+  const names = ['小明', '小红', '小刚', '阿杰', '琳琳', '大伟', '思思', '浩然']
+  collabUsername.value = names[Math.floor(Math.random() * names.length)]
+  localStorage.setItem('doccollab_username', collabUsername.value)
+}
+
+function setupCollab(docId: string) {
+  teardownCollab()
+  const channel = new BroadcastChannel(`doccollab-${docId}`)
+  collabChannel.value = channel
+
+  channel.postMessage({ type: 'join', username: collabUsername.value })
+
+  channel.onmessage = (e) => {
+    const msg = e.data
+    if (msg.type === 'join') {
+      participants.value = [...new Set([...participants.value, msg.username])]
+      channel.postMessage({ type: 'welcome', username: collabUsername.value })
+    } else if (msg.type === 'welcome') {
+      participants.value = [...new Set([...participants.value, msg.username])]
+    } else if (msg.type === 'edit') {
+      // 用版本号去重：忽略自己的回音和旧消息
+      if (msg.version <= remoteVersion) return
+      remoteVersion = msg.version
+      if (editingDoc.value && editor.value) {
+        editor.value.commands.setContent(msg.html)
+        editingDoc.value.content = msg.html
+        originalContent = msg.html
+        hasUnsaved.value = false
+        if (msg.username !== collabUsername.value) {
+          ElMessage.info(`${msg.username} 更新了文档`)
+        }
+      }
+    }
+  }
+}
+
+function teardownCollab() {
+  if (editDebounce) clearTimeout(editDebounce)
+  collabChannel.value?.close()
+  collabChannel.value = null
+  participants.value = []
+  remoteVersion = 0
+  localVersion = 0
+}
+
+// ========== 原有逻辑 ==========
+
 const docs = computed(() => store.currentContainer?.documents ?? [])
 
 const editor = useEditor({
   content: '',
   extensions: [StarterKit, Underline],
-  editorProps: {
-    attributes: {
-      class: 'prose'
+  editorProps: { attributes: { class: 'prose' } },
+  onUpdate({ editor: ed }) {
+    // 本端编辑 → 标记未保存 + 防抖广播
+    if (editingDoc.value) {
+      hasUnsaved.value = ed.getHTML() !== originalContent
     }
+    localVersion++
+    const v = localVersion
+    const html = ed.getHTML()
+    if (editDebounce) clearTimeout(editDebounce)
+    editDebounce = setTimeout(() => {
+      if (collabChannel.value) {
+        collabChannel.value.postMessage({ type: 'edit', username: collabUsername.value, html, version: v })
+      }
+    }, 300)
   }
 })
 
-// 监听编辑内容变化
-watch(() => editor.value?.getHTML(), (val) => {
-  if (editingDoc.value && val !== undefined) {
-    hasUnsaved.value = val !== originalContent
+
+// 开始编辑文档时建立协作通道
+watch(editingDoc, (doc) => {
+  if (doc?.id) {
+    setupCollab(doc.id)
+  } else {
+    teardownCollab()
   }
 })
+
+// ========== 辅助函数 ==========
 
 function getTextLen(html: string): number {
   const div = document.createElement('div')
   div.innerHTML = html
   return (div.textContent || '').replace(/\s+/g, '').length
+}
+
+const userColors = ['#67c23a', '#e6a23c', '#f56c6c', '#909399', '#b37feb']
+function userColor(name: string) {
+  let hash = 0
+  for (const c of name) hash = c.charCodeAt(0) + ((hash << 5) - hash)
+  return userColors[Math.abs(hash) % userColors.length]
 }
 
 function createNewDoc() {
@@ -288,6 +387,7 @@ function saveDoc() {
 }
 
 onBeforeUnmount(() => {
+  teardownCollab()
   editor.value?.destroy()
 })
 </script>
@@ -473,6 +573,37 @@ onBeforeUnmount(() => {
 .save-hint {
   font-size: 12px;
   color: #e6a23c;
+}
+
+.collab-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+  color: #67c23a;
+  background: #f0f9eb;
+  padding: 2px 10px;
+  border-radius: 12px;
+  cursor: pointer;
+}
+
+.participant-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 0;
+  font-size: 13px;
+}
+
+.participant-item.me {
+  font-weight: 600;
+}
+
+.dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
 }
 
 /* --- 工具栏 --- */

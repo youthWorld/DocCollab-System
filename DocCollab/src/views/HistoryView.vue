@@ -138,6 +138,23 @@
             </div>
           </div>
 
+          <!-- 容器标签 -->
+          <div class="detail-section">
+            <h4>容器标签</h4>
+            <div class="tag-row">
+              <el-tag v-for="tag in group.customTags" :key="tag" closable size="small" type="warning" effect="light" @close="removeTag(group.containerId, tag)">
+                {{ tag }}
+              </el-tag>
+              <el-input v-if="taggingId === group.containerId" ref="tagInputRef" v-model="newTag" size="small" placeholder="输入标签后回车" class="tag-input-inline" @keyup.enter="addTag(group.containerId)" @blur="cancelTagInput" />
+              <el-button v-else size="small" text type="primary" @click="startTagInput(group.containerId)">
+                <el-icon>
+                  <Plus />
+                </el-icon>
+                添加标签
+              </el-button>
+            </div>
+          </div>
+
           <!-- 操作 -->
           <div class="detail-actions">
             <el-button size="small" @click="switchToVersion(group.containerId)" type="primary" plain>
@@ -145,6 +162,12 @@
                 <Switch />
               </el-icon>
               切换到该版本
+            </el-button>
+            <el-button size="small" @click="exportVersion(group.containerId)" type="success" plain>
+              <el-icon>
+                <Download />
+              </el-icon>
+              批量导出
             </el-button>
           </div>
         </div>
@@ -154,14 +177,72 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed } from 'vue'
-import { ArrowDown } from '@element-plus/icons-vue'
+import { ref, computed, nextTick } from 'vue'
+import { ElMessage } from 'element-plus'
+import { ArrowDown, Plus, Download, Switch } from '@element-plus/icons-vue'
+import { saveAs } from 'file-saver'
 import { useProjectStore } from '@/stores/project'
-import { formatDate, formatFileSize, getVersionChanges } from '@/utils/storage'
+import {
+  formatDate,
+  formatFileSize,
+  getVersionChanges,
+  addContainerTag,
+  removeContainerTag,
+  exportContainerZip,
+} from '@/utils/storage'
 import type { FileItem, VersionDiff } from '@/types'
 
 const store = useProjectStore()
 const expandedId = ref<string | null>(null)
+
+// ========== R9: 标签管理 ==========
+const taggingId = ref<string | null>(null)
+const newTag = ref('')
+const tagInputRef = ref<InstanceType<typeof import('element-plus').ElInput> | null>(null)
+
+function startTagInput(containerId: string) {
+  taggingId.value = containerId
+  newTag.value = ''
+  nextTick(() => {
+    const el = document.querySelector('.tag-input-inline input') as HTMLInputElement
+    el?.focus()
+  })
+}
+
+function cancelTagInput() {
+  taggingId.value = null
+  newTag.value = ''
+}
+
+function addTag(containerId: string) {
+  const tag = newTag.value.trim()
+  if (!tag || !store.currentProjectId) return
+  if (addContainerTag(store.currentProjectId, containerId, tag)) {
+    store.refresh()
+    ElMessage.success(`已添加标签「${tag}」`)
+  }
+  cancelTagInput()
+}
+
+function removeTag(containerId: string, tag: string) {
+  if (!store.currentProjectId) return
+  removeContainerTag(store.currentProjectId, containerId, tag)
+  store.refresh()
+  ElMessage.success(`已移除标签「${tag}」`)
+}
+
+// ========== R8: 批量导出 ==========
+async function exportVersion(containerId: string) {
+  if (!store.currentProjectId) return
+  ElMessage.info('正在打包...')
+  const blob = await exportContainerZip(store.currentProjectId, containerId)
+  if (blob) {
+    saveAs(blob, `export-${containerId}.zip`)
+    ElMessage.success('导出成功')
+  } else {
+    ElMessage.error('导出失败')
+  }
+}
 
 // 按版本分组（倒序，最新的在前），附带 diff
 const versions = computed(() => {
@@ -177,6 +258,7 @@ const versions = computed(() => {
     fileCount: c.files.length,
     files: [...c.files],
     documents: [...c.documents],
+    customTags: [...c.customTags],
     diff: getVersionChanges(containers, c.id)
   }))
 })
@@ -544,5 +626,17 @@ function getTextLen(html: string): number {
   font-size: 13px;
   color: #909399;
   padding: 4px 0;
+}
+
+/* 标签行 */
+.tag-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.tag-input-inline {
+  width: 160px;
 }
 </style>

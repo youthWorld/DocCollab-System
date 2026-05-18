@@ -299,6 +299,79 @@ export function formatFileSize(bytes: number): string {
 	return (bytes / (1024 * 1024)).toFixed(1) + ' MB'
 }
 
+// ========== R9: 容器标签 ==========
+
+export function addContainerTag(
+	projectId: string,
+	containerId: string,
+	tag: string,
+): boolean {
+	const projects = loadProjects()
+	const project = projects.find(p => p.id === projectId)
+	if (!project) return false
+	const container = project.containers.find(c => c.id === containerId)
+	if (!container) return false
+	if (container.customTags.includes(tag)) return false
+	container.customTags.push(tag)
+	saveProjects(projects)
+	return true
+}
+
+export function removeContainerTag(
+	projectId: string,
+	containerId: string,
+	tag: string,
+): boolean {
+	const projects = loadProjects()
+	const project = projects.find(p => p.id === projectId)
+	if (!project) return false
+	const container = project.containers.find(c => c.id === containerId)
+	if (!container) return false
+	container.customTags = container.customTags.filter(t => t !== tag)
+	saveProjects(projects)
+	return true
+}
+
+// ========== R8: 批量导出 ==========
+
+export async function exportContainerZip(
+	projectId: string,
+	containerId: string,
+): Promise<Blob | null> {
+	const project = getProject(projectId)
+	if (!project) return null
+	const container = project.containers.find(c => c.id === containerId)
+	if (!container) return null
+
+	const [JSZipModule, TurndownService] = await Promise.all([
+		import('jszip'),
+		import('turndown'),
+	])
+	const JSZip = JSZipModule.default
+	const zip = new JSZip()
+	const turndown = new TurndownService.default({
+		headingStyle: 'atx',
+		codeBlockStyle: 'fenced',
+	})
+
+	// 添加文件
+	for (const file of container.files) {
+		zip.file('files/' + file.name, file.data, { base64: true })
+	}
+
+	// 添加文档（转为 Markdown）
+	for (const doc of container.documents) {
+		const md = turndown.turndown(doc.content)
+		zip.file('documents/' + (doc.title || '未命名文档') + '.md', md)
+	}
+
+	// 添加版本信息
+	const info = `项目: ${project.name}\n版本: ${container.version}\n标签: ${container.label ?? '无'}\n描述: ${container.description ?? '无'}\n日期: ${formatDate(container.createdAt)}\n文件数: ${container.files.length}\n文档数: ${container.documents.length}`
+	zip.file('版本信息.txt', info)
+
+	return await zip.generateAsync({ type: 'blob' })
+}
+
 export function formatDate(iso: string): string {
 	return new Date(iso).toLocaleString('zh-CN')
 }
