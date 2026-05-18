@@ -88,8 +88,8 @@ export const useProjectStore = defineStore('project', () => {
 				projects.value = loadProjects()
 				currentContainerId.value = c.id
 			}
-		} else {
-			currentContainerId.value = p.containers[p.containers.length - 1].id
+		} else if (p.containers.length > 0) {
+			currentContainerId.value = p.containers[p.containers.length - 1]!.id
 		}
 	}
 

@@ -241,7 +241,7 @@ export function getVersionChanges(
 	const idx = containers.findIndex(c => c.id === containerId)
 	if (idx < 0) return null
 
-	const current = containers[idx]
+	const current = containers[idx]!
 	const previous = idx > 0 ? containers[idx - 1] : null
 
 	if (!previous) {

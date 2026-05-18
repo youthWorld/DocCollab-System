@@ -240,7 +240,7 @@ let editDebounce: ReturnType<typeof setTimeout> | null = null
 
 if (!collabUsername.value) {
   const names = ['小明', '小红', '小刚', '阿杰', '琳琳', '大伟', '思思', '浩然']
-  collabUsername.value = names[Math.floor(Math.random() * names.length)]
+  collabUsername.value = names[Math.floor(Math.random() * names.length)]!
   localStorage.setItem('doccollab_username', collabUsername.value)
 }
 
