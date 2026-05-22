@@ -1,0 +1,3 @@
+# 将所有请求重写到 /DocCollab-System/ 子目录下
+/DocCollab-System/*    /:splat    200
+/*    /DocCollab-System/index.html    200
